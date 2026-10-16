@@ -1,0 +1,9 @@
+ThreatLocker MCP Server
+Copyright 2026 MSPbots.ai
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+"ThreatLocker" is a trademark of its respective owner. This project is an
+independent integration that calls the documented ThreatLocker Portal API; it
+contains no ThreatLocker source code and is not affiliated with or endorsed by
+ThreatLocker.
