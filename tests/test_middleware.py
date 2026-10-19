@@ -57,7 +57,7 @@ def test_missing_key_returns_401(value):
 
 @pytest.mark.parametrize(
     "extra",
-    [{"X-Threatlocker-Organization-Id": "acme"}, {"X-Threatlocker-Instance": "g1!"}],
+    [{"X-Threatlocker-Organization-Id": "example"}, {"X-Threatlocker-Instance": "g1!"}],
 )
 def test_bad_values_return_400(extra):
     with _client() as client:

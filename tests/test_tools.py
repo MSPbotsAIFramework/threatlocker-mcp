@@ -110,3 +110,20 @@ def test_tool_without_credentials_returns_not_configured():
 def test_navigate_needs_no_credentials():
     content, _ = asyncio.run(create_mcp_server().call_tool("threatlocker_navigate", {"domain": "computer_groups"}))
     assert json.loads(content[0].text)["tools"] == ["threatlocker_computer_groups_list", "threatlocker_computer_groups_dropdown"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "threatlocker_computers_list",
+        "threatlocker_computers_get_checkins",
+        "threatlocker_approvals_list",
+        "threatlocker_audit_search",
+        "threatlocker_audit_file_history",
+        "threatlocker_organizations_list_children",
+    ],
+)
+def test_page_size_capped_at_200(tools, name):
+    schema = tools[name].inputSchema["properties"]["pageSize"]
+    maxima = [schema.get("maximum")] + [option.get("maximum") for option in schema.get("anyOf", [])]
+    assert 200 in maxima and not any(m and m > 200 for m in maxima)

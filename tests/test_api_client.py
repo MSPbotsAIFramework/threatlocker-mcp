@@ -106,6 +106,22 @@ async def test_instance_is_detected_and_cached():
     assert len(rec.requests) == probes + 2
 
 
+async def test_expired_instance_entry_is_probed_again(monkeypatch):
+    def route(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200 if request.url.host == "portalapi.d.threatlocker.com" else 401, json=0)
+
+    monkeypatch.setattr(api_client, "_INSTANCE_CACHE_TTL_SECONDS", -1.0)
+    rec = Recorder({"ApprovalRequest/ApprovalRequestGetCount": route, "Organization/OrganizationGetForMoveComputers": route})
+    creds = ThreatLockerCredentials(api_key="key-123", organization_id=ORG)
+    await _client(rec, creds).get("Organization/OrganizationGetForMoveComputers")
+    assert len(rec.requests) == 8
+    second = _client(rec, creds)
+    await second.get("Organization/OrganizationGetForMoveComputers")
+    assert second.instance == "d"
+    assert len(rec.requests) == 16
+    assert len(api_client._instance_cache) == 1
+
+
 async def test_no_instance_accepts_the_key(monkeypatch):
     rec = Recorder(default=lambda r: httpx.Response(401, json={"message": "Unauthorized"}))
     creds = ThreatLockerCredentials(api_key="key-123", organization_id=ORG)
@@ -263,8 +279,8 @@ async def test_file_history_needs_a_computer(monkeypatch):
 
 async def test_children_body(monkeypatch):
     rec = Recorder({"POST Organization/OrganizationGetChildOrganizationsByParameters": {"items": [{"name": "A"}], "totalItems": 1}})
-    result = await _call(monkeypatch, rec, "threatlocker_organizations_list_children", {"searchText": "acme"})
-    assert body(rec.requests[0])["searchText"] == "acme"
+    result = await _call(monkeypatch, rec, "threatlocker_organizations_list_children", {"searchText": "example"})
+    assert body(rec.requests[0])["searchText"] == "example"
     assert (result["count"], result["total"], result["has_more"]) == (1, 1, False)
 
 

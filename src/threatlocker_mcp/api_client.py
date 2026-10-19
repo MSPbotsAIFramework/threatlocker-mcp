@@ -49,11 +49,13 @@ def _get_shared_http_client() -> httpx.AsyncClient:
     return _shared_http_client
 
 
-# Which portal instance a key works on (sha256 of the key -> instance letter).
-# Holds no credential and nothing that can be turned back into one; it only
-# saves re-probing every instance on each request.
-_instance_cache: "OrderedDict[str, str]" = OrderedDict()
+# Which portal instance a key works on (sha256 of the key -> (instance letter,
+# monotonic expiry time)). Holds no credential and nothing that can be turned
+# back into one; it only saves re-probing every instance on each request.
+# Entries expire so a key moved to another instance is re-probed.
+_instance_cache: "OrderedDict[str, tuple[str, float]]" = OrderedDict()
 _INSTANCE_CACHE_SIZE = 500
+_INSTANCE_CACHE_TTL_SECONDS = 24 * 60 * 60.0
 
 
 def _cache_key(api_key: str) -> str:
@@ -143,9 +145,9 @@ class ThreatLockerClient:
             return self.instance
         key = _cache_key(self._credentials.api_key)
         cached = _instance_cache.get(key)
-        if cached:
-            self.instance = cached
-            return cached
+        if cached and time.monotonic() < cached[1]:
+            self.instance = cached[0]
+            return cached[0]
 
         async def probe(instance: str) -> str | None:
             url = f"{API_URL_TEMPLATE.format(instance=instance)}/{PROBE_PATH}"
@@ -163,7 +165,7 @@ class ThreatLockerClient:
                 "No ThreatLocker portal instance accepted this API key and organization id. Check both, or send "
                 "X-Threatlocker-Instance (the letter in your portal address, e.g. g for portal.g.threatlocker.com).",
             )
-        _instance_cache[key] = found
+        _instance_cache[key] = (found, time.monotonic() + _INSTANCE_CACHE_TTL_SECONDS)
         _instance_cache.move_to_end(key)
         while len(_instance_cache) > _INSTANCE_CACHE_SIZE:
             _instance_cache.popitem(last=False)

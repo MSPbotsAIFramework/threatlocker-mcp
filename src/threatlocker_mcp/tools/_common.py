@@ -41,7 +41,7 @@ NOT_CONFIGURED = error_envelope(
 DEFAULT_PAGE_SIZE = 25
 
 PageNumber = Annotated[int | None, Field(description="Page number, from 1 (default 1).", ge=1)]
-PageSize = Annotated[int | None, Field(description=f"Results per page, 1-500 (default {DEFAULT_PAGE_SIZE}).", ge=1, le=500)]
+PageSize = Annotated[int | None, Field(description=f"Results per page, 1-200 (default {DEFAULT_PAGE_SIZE}).", ge=1, le=200)]
 SearchText = Annotated[str | None, Field(description="Text to search for.")]
 ChildOrganizations = Annotated[bool | None, Field(description="Also include child organizations' records.")]
 Guid = Annotated[str, Field(description="GUID.", min_length=1)]
