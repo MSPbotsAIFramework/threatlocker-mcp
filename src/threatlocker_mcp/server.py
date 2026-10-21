@@ -94,7 +94,11 @@ def normalize_instance(value: str) -> str | None:
 
 
 class GatewayCredentialsMiddleware:
-    """Reads the ThreatLocker headers on /mcp requests into the request context; 401 without a key."""
+    """Reads the ThreatLocker headers on /mcp requests into the request context; 401 without a key.
+
+    Malformed organization id / instance values do not block the request (tools/list
+    must work with any values); tools report them instead.
+    """
 
     def __init__(self, app: ASGIApp):
         self.app = app
@@ -120,15 +124,20 @@ class GatewayCredentialsMiddleware:
                 status_code=401,
             )(scope, receive, send)
             return
+        errors: list[str] = []
         if organization_id and not _GUID.match(organization_id):
-            await self._reject(scope, receive, send, f"{HEADER_ORGANIZATION_ID} must be a GUID")
-            return
+            errors.append(f"{HEADER_ORGANIZATION_ID} must be a GUID")
+            organization_id = None
         instance = normalize_instance(instance_raw) if instance_raw else None
         if instance_raw and not instance:
-            await self._reject(scope, receive, send, f"{HEADER_INSTANCE} must be the portal instance letter, e.g. g")
-            return
+            errors.append(f"{HEADER_INSTANCE} must be the portal instance letter, e.g. g")
 
-        credentials = ThreatLockerCredentials(api_key=api_key, organization_id=organization_id, instance=instance)
+        credentials = ThreatLockerCredentials(
+            api_key=api_key,
+            organization_id=organization_id,
+            instance=instance,
+            header_error="; ".join(errors) or None,
+        )
         request_id = (request.headers.get("x-request-id") or "").strip()[:64] or uuid.uuid4().hex[:12]
         creds_token = _credentials_var.set(credentials)
         rid_token = request_id_var.set(request_id)
@@ -137,10 +146,6 @@ class GatewayCredentialsMiddleware:
         finally:
             _credentials_var.reset(creds_token)
             request_id_var.reset(rid_token)
-
-    @staticmethod
-    async def _reject(scope: Scope, receive: Receive, send: Send, message: str) -> None:
-        await JSONResponse({"error": "Invalid header", "message": message}, status_code=400)(scope, receive, send)
 
 
 def create_mcp_server(settings: Settings | None = None) -> FastMCP:

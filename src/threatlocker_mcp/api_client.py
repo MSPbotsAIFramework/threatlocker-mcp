@@ -108,6 +108,9 @@ class ThreatLockerCredentials:
     api_key: str
     organization_id: str | None = None
     instance: str | None = None
+    # Set when a header value is malformed: tools then return invalid_argument
+    # instead of calling ThreatLocker, while tools/list still works.
+    header_error: str | None = None
 
     def __repr__(self) -> str:  # never leak the key into logs or tracebacks
         return (
@@ -128,6 +131,7 @@ class ThreatLockerClient:
     def __init__(self, credentials: ThreatLockerCredentials, http_client: httpx.AsyncClient | None = None):
         self._credentials = credentials
         self._http = http_client
+        self.header_error = credentials.header_error
         self.instance = credentials.instance
 
     def _client(self) -> httpx.AsyncClient:

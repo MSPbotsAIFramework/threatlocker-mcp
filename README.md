@@ -35,7 +35,7 @@ How credentials are sent to ThreatLocker: every call goes to
 `Authorization` header (no `Bearer` prefix) and the organization id in `ManagedOrganizationId`.
 
 A request to `/mcp` without the key gets HTTP 401; an organization id that is not a GUID or an
-unusable instance value gets HTTP 400.
+unusable instance value does not block the request, and tools return `invalid_argument` instead.
 
 ## Tools
 
