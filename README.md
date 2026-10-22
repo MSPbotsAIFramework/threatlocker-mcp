@@ -56,7 +56,7 @@ group, organization and approval request ids are GUIDs.
 | `threatlocker_approvals_get` | One approval request: requester, computer, file, hash, certificate, justification | **approvalRequestId** |
 | `threatlocker_approvals_pending_count` | Count of pending approval requests | - |
 | `threatlocker_approvals_get_permit_application` | What approving a request would permit | **approvalRequestId** |
-| `threatlocker_audit_search` | Search the unified audit (what ran or was blocked); default window the last 24 h. `total` is given only on the last page: the API's count while more pages exist is not a total | searchText (file path contains), startDate, endDate, pageNumber, pageSize, childOrganizations, hostname, actionType |
+| `threatlocker_audit_search` | Search the unified audit (what ran or was blocked); default window the last 24 h. `total` is given only on the last page that has rows (an empty page past the end has none): the API's count while more pages exist is not a total | searchText (file path contains), startDate, endDate, pageNumber, pageSize, childOrganizations, hostname, actionType |
 | `threatlocker_audit_get` | One audit entry in full; without sourceTableId, tables 1 then 2 are tried (search rows come from table 1) | eActionLogId (from a search row), sourceTableId (1-4), actionLogId (deprecated alias) |
 | `threatlocker_audit_file_history` | Audit history of one file on one computer | **fullPath**, hostname or computerId, sourceTableId, pageNumber, pageSize |
 | `threatlocker_organizations_list_children` | Child (customer) organizations | searchText, pageNumber, pageSize |

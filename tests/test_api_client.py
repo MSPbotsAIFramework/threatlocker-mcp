@@ -334,14 +334,50 @@ async def test_audit_get_explicit_table_is_used_as_given(monkeypatch):
 # ---- PRD-20959: audit_search total ---------------------------------------------------------------
 
 
+def _audit_page(rows, total_items):
+    """One audit-search reply: `rows` rows, and the API's pagination header (its totalItems)."""
+    data = [{"eActionLogId": f"e{i}"} for i in range(rows)]
+    return lambda r: httpx.Response(200, json=data, headers={"pagination": json.dumps({"totalItems": total_items})})
+
+
+# QA retests of PRD-20959 (32-row window), one row per call. totalItems is what the API sent:
+# "rows up to this page + 1" while more exist, the row count on the last page, and a value that
+# grows with the page number on empty pages past the end.
 @pytest.mark.parametrize(
-    "number,rows,total_items,expected",
-    [(1, 3, 4, None), (2, 3, 7, None), (10, 3, 31, None), (4, 2, 11, 11)],
+    "size,number,rows,total_items,expected_total",
+    [
+        (5, 1, 5, 6, None),  # normal walk, pages 1-6: no total
+        (5, 6, 5, 31, None),
+        (5, 7, 2, 32, 32),  # real last page: total 32
+        (10, 4, 2, 32, 32),  # real last page
+        (10, 5, 0, 40, None),  # past the end: API says 40
+        (5, 8, 0, 35, None),  # past the end: API says 35
+        (50, 2, 0, 50, None),  # past the end: API says 50
+        (50, 3, 0, 100, None),  # past the end: API says 100
+        (50, 1, 32, 32, 32),  # everything on page 1
+        (50, 1, 0, 0, 0),  # empty window: the total really is 0
+        (3, 1, 3, 4, None),  # first retest, 24 h window: 3 / 4
+        (3, 10, 3, 31, None),  # ... page 10: 3 / 31
+    ],
 )
-async def test_audit_search_reports_total_only_on_the_last_page(monkeypatch, number, rows, total_items, expected):
-    reply = {"data": [{"eActionLogId": f"e{i}"} for i in range(rows)], "totalItems": total_items}
-    rec = Recorder({"POST ActionLog/ActionLogGetByParametersV2": lambda r: httpx.Response(
-        200, json=reply["data"], headers={"pagination": json.dumps({"totalItems": total_items})})})
-    result = await _call(monkeypatch, rec, "threatlocker_audit_search", {"pageNumber": number, "pageSize": 3})
-    assert result.get("total") == expected
-    assert result["has_more"] is (expected is None)
+async def test_audit_search_total_matches_qa_retests(monkeypatch, size, number, rows, total_items, expected_total):
+    rec = Recorder({"POST ActionLog/ActionLogGetByParametersV2": _audit_page(rows, total_items)})
+    result = await _call(monkeypatch, rec, "threatlocker_audit_search", {"pageNumber": number, "pageSize": size})
+    assert result.get("total") == expected_total
+    assert result["count"] == rows
+    last = expected_total is not None or rows == 0
+    assert result["has_more"] is (not last)
+    if rows == 0 and number > 1:
+        assert "past the last page" in result["note"]
+
+
+async def test_audit_search_total_never_changes_with_the_page_number(monkeypatch):
+    # Acceptance: the same window never reports two different totals, whatever page is asked.
+    seen = set()
+    for size, number, rows, total_items in [(5, 7, 2, 32), (10, 4, 2, 32), (10, 5, 0, 40), (5, 8, 0, 35),
+                                            (50, 2, 0, 50), (50, 3, 0, 100), (50, 1, 32, 32)]:
+        rec = Recorder({"POST ActionLog/ActionLogGetByParametersV2": _audit_page(rows, total_items)})
+        result = await _call(monkeypatch, rec, "threatlocker_audit_search", {"pageNumber": number, "pageSize": size})
+        if "total" in result:
+            seen.add(result["total"])
+    assert seen == {32}

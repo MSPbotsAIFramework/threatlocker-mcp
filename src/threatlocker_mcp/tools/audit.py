@@ -102,7 +102,7 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
         """Search the unified audit: which files ran, were blocked or were permitted, where and when.
 
         Rows carry eActionLogId for threatlocker_audit_get. The API reports no total while more
-        pages exist: total is given only on the last page (has_more false).
+        pages exist: total is given only on the last page that has rows (has_more false).
         """
 
         async def action(client: ThreatLockerClient) -> dict:
@@ -124,10 +124,17 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
             page = await client.post("ActionLog/ActionLogGetByParametersV2", body, headers={"usenewsearch": "true"})
             result = page_result(page, number, size)
             # The new search's totalItems is "rows up to this page + 1", not a total: keep it only
-            # for has_more, and give the real total once the last page is reached.
+            # for has_more. The total is known only on a last page that has rows (or an empty
+            # page 1); an empty page past the end says nothing about how many rows there are.
             result.pop("total", None)
             if not result["has_more"]:
-                result["total"] = (number - 1) * size + result["count"]
+                if result["count"] > 0 or number == 1:
+                    result["total"] = (number - 1) * size + result["count"]
+                else:
+                    result["note"] = (
+                        f"Page {number} is past the last page of results; the total is given on the "
+                        "last page that has rows."
+                    )
             return {"window": {"start": start, "end": end}, **result}
 
         return await run_tool("threatlocker_audit_search", client_factory, action)
