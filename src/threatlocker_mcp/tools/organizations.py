@@ -19,12 +19,13 @@ from mcp.server.fastmcp import FastMCP
 
 from ..api_client import ThreatLockerClient
 from ._common import (
-    DEFAULT_PAGE_SIZE,
     READ_ONLY,
     ClientFactory,
+    Offset,
     PageNumber,
     PageSize,
     SearchText,
+    locate,
     page_result,
     rows,
     run_tool,
@@ -37,11 +38,12 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
         searchText: SearchText = None,
         pageNumber: PageNumber = None,
         pageSize: PageSize = None,
+        offset: Offset = None,
     ) -> str:
         """List child (customer) organizations under the managed organization, with their ids."""
 
         async def action(client: ThreatLockerClient) -> dict:
-            number, size = pageNumber or 1, pageSize or DEFAULT_PAGE_SIZE
+            number, size, start = locate(offset, pageNumber, pageSize)
             body = {
                 "searchText": (searchText or "").strip(),
                 "pageNumber": number,
@@ -51,7 +53,7 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
                 "includeAllChildren": True,
             }
             page = await client.post("Organization/OrganizationGetChildOrganizationsByParameters", body)
-            return page_result(page, number, size)
+            return page_result(page, number, size, start)
 
         return await run_tool("threatlocker_organizations_list_children", client_factory, action)
 

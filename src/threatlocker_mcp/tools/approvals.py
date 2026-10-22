@@ -20,14 +20,15 @@ from pydantic import Field
 
 from ..api_client import ThreatLockerClient
 from ._common import (
-    DEFAULT_PAGE_SIZE,
     READ_ONLY,
     ChildOrganizations,
     ClientFactory,
+    Offset,
     PageNumber,
     PageSize,
     SearchText,
     guid,
+    locate,
     page_result,
     run_tool,
 )
@@ -69,11 +70,12 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
         pageSize: PageSize = None,
         searchText: SearchText = None,
         childOrganizations: ChildOrganizations = None,
+        offset: Offset = None,
     ) -> str:
         """List approval requests (blocked software users asked to run), newest first, by status."""
 
         async def action(client: ThreatLockerClient) -> dict:
-            number, size = pageNumber or 1, pageSize or DEFAULT_PAGE_SIZE
+            number, size, start = locate(offset, pageNumber, pageSize)
             body = {
                 "statusId": status_id(status),
                 "searchText": (searchText or "").strip(),
@@ -83,7 +85,7 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
                 "isAscending": False,
                 "showChildOrganizations": bool(childOrganizations),
             }
-            result = page_result(await client.post("ApprovalRequest/ApprovalRequestGetByParameters", body), number, size)
+            result = page_result(await client.post("ApprovalRequest/ApprovalRequestGetByParameters", body), number, size, start)
             if status and status.strip().lower() == "all":
                 result["note"] = "The API filters by one status; showing Pending."
             return result

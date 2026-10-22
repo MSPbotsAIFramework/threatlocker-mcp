@@ -42,6 +42,10 @@ DEFAULT_PAGE_SIZE = 25
 
 PageNumber = Annotated[int | None, Field(description="Page number, from 1 (default 1).", ge=1)]
 PageSize = Annotated[int | None, Field(description=f"Results per page, 1-200 (default {DEFAULT_PAGE_SIZE}).", ge=1, le=200)]
+Offset = Annotated[
+    int | None,
+    Field(description="Record position to start from (0-based, overrides pageNumber); pass next_offset from the previous result.", ge=0),
+]
 SearchText = Annotated[str | None, Field(description="Text to search for.")]
 ChildOrganizations = Annotated[bool | None, Field(description="Also include child organizations' records.")]
 Guid = Annotated[str, Field(description="GUID.", min_length=1)]
@@ -70,9 +74,27 @@ def rows(payload: Any) -> list:
     return []
 
 
-def page_result(page: Page, number: int, size: int) -> dict:
-    """Items plus paging: {items, count, page, page_size, total, has_more}."""
-    items = rows(page.data)
+def locate(offset: int | None, page_number: int | None, page_size: int | None) -> tuple[int, int, int]:
+    """(pageNumber, pageSize, start) for a read from record ``start``.
+
+    ThreatLocker pages by number only, so a position is reached by asking for the page that
+    holds it (same page size) and skipping the records before it.
+    """
+    size = page_size or DEFAULT_PAGE_SIZE
+    start = offset if offset is not None else ((page_number or 1) - 1) * size
+    return start // size + 1, size, start
+
+
+def page_result(page: Page, number: int, size: int, start: int | None = None) -> dict:
+    """Items from record ``start`` of page ``number``, plus paging.
+
+    {items, count, page, page_size, total, has_more, offset, next_offset}. next_offset continues
+    right after the last record returned, also when the result is cut to fit the size limit
+    (a page number cannot: the rest of a cut page is not on any other page).
+    """
+    first = (number - 1) * size
+    start = first if start is None else start
+    items = rows(page.data)[start - first :]
     meta = page.pagination or {}
     total = meta.get("totalItems")
     if total is None and isinstance(page.data, dict):
@@ -91,6 +113,9 @@ def page_result(page: Page, number: int, size: int) -> dict:
             "page_size": size,
             "total": total,
             "has_more": more,
+            "offset": start,
+            "next_offset": start + len(items) if more else None,
+            "_resume": {"key": "next_offset", "start": start},
         }
     )
 

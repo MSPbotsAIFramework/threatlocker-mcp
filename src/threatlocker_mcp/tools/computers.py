@@ -20,15 +20,16 @@ from pydantic import Field
 
 from ..api_client import ThreatLockerClient
 from ._common import (
-    DEFAULT_PAGE_SIZE,
     READ_ONLY,
     ChildOrganizations,
     ClientFactory,
+    Offset,
     PageNumber,
     PageSize,
     SearchText,
     compact,
     guid,
+    locate,
     page_result,
     rows,
     run_tool,
@@ -45,11 +46,12 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
         pageNumber: PageNumber = None,
         pageSize: PageSize = None,
         childOrganizations: ChildOrganizations = None,
+        offset: Offset = None,
     ) -> str:
         """List protected computers: name, group, organization, mode, agent version and last check-in."""
 
         async def action(client: ThreatLockerClient) -> dict:
-            number, size = pageNumber or 1, pageSize or DEFAULT_PAGE_SIZE
+            number, size, start = locate(offset, pageNumber, pageSize)
             body = compact(
                 {
                     "searchText": (searchText or "").strip(),
@@ -60,7 +62,7 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
                     "showLastCheckIn": True,
                 }
             )
-            return page_result(await client.post("Computer/ComputerGetByAllParameters", body), number, size)
+            return page_result(await client.post("Computer/ComputerGetByAllParameters", body), number, size, start)
 
         return await run_tool("threatlocker_computers_list", client_factory, action)
 
@@ -78,11 +80,12 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
         computerId: ComputerId,
         pageNumber: PageNumber = None,
         pageSize: PageSize = None,
+        offset: Offset = None,
     ) -> str:
         """Get a computer's check-in history, newest first (heartbeats hidden)."""
 
         async def action(client: ThreatLockerClient) -> dict:
-            number, size = pageNumber or 1, pageSize or DEFAULT_PAGE_SIZE
+            number, size, start = locate(offset, pageNumber, pageSize)
             body = {
                 "computerId": guid(computerId, "computerId"),
                 "pageNumber": number,
@@ -90,7 +93,7 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
                 "hideHeartbeat": True,
                 "showTotalCount": True,
             }
-            return page_result(await client.post("ComputerCheckin/ComputerCheckinGetByParameters", body), number, size)
+            return page_result(await client.post("ComputerCheckin/ComputerCheckinGetByParameters", body), number, size, start)
 
         return await run_tool("threatlocker_computers_get_checkins", client_factory, action)
 

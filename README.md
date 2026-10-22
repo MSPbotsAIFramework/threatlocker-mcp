@@ -40,8 +40,12 @@ unusable instance value does not block the request, and tools return `invalid_ar
 ## Tools
 
 All tools return a JSON string and are read-only. Paged tools take `pageNumber` (from 1) and
-`pageSize` (default 25) and return `{items, count, page, page_size, total, has_more}`. Computer,
-group, organization and approval request ids are GUIDs.
+`pageSize` (default 25) and return `{items, count, page, page_size, total, has_more, offset,
+next_offset}`. They also take `offset` (record position from 0, overrides `pageNumber`): pass
+`next_offset` as `offset` for the next records. ThreatLocker pages by number only, so when a page
+is cut to fit the response size limit the rest of it is on no other page; `next_offset` then
+starts right after the last record returned, and the tool reads the page that holds it.
+Computer, group, organization and approval request ids are GUIDs.
 
 | Tool | Purpose | Parameters (required in **bold**) |
 |---|---|---|

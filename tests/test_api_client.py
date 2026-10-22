@@ -381,3 +381,150 @@ async def test_audit_search_total_never_changes_with_the_page_number(monkeypatch
         if "total" in result:
             seen.add(result["total"])
     assert seen == {32}
+
+
+
+# ---- Page-number paging that survives truncation (offset / next_offset) -----------------------------
+# Self-test checklist: a cut page continues right after the last record returned (from page 1 and
+# from a later page); offset aligned / not aligned to a page; offset past the end; offset wins over
+# pageNumber; pageNumber-only calls send the same request as before; no retry hint for a page size.
+
+TOTAL = 137
+ROWS = [{"id": f"r{i:03d}", "name": f"Row {i}", **{f"f{k}": f"value {k}" for k in range(40)}} for i in range(TOTAL)]
+SMALL = [{"id": f"r{i:03d}"} for i in range(TOTAL)]
+
+PAGED_TOOLS = [
+    ("threatlocker_computers_list", "POST Computer/ComputerGetByAllParameters", {}),
+    ("threatlocker_computers_get_checkins", "POST ComputerCheckin/ComputerCheckinGetByParameters", {"computerId": ORG}),
+    ("threatlocker_approvals_list", "POST ApprovalRequest/ApprovalRequestGetByParameters", {}),
+    ("threatlocker_organizations_list_children", "POST Organization/OrganizationGetChildOrganizationsByParameters", {}),
+    ("threatlocker_audit_search", "POST ActionLog/ActionLogGetByParametersV2", {}),
+]
+
+
+def _paged_api(rows, audit=False):
+    """Pages by pageNumber / pageSize like ThreatLocker; audit search reports "rows so far + 1"."""
+
+    def reply(request):
+        sent = body(request)
+        number, size = sent["pageNumber"], sent["pageSize"]
+        chunk = rows[(number - 1) * size : number * size]
+        more = number * size < len(rows)
+        total = min(len(rows), number * size + 1) if audit and more else len(rows)
+        return httpx.Response(200, json=chunk, headers={"pagination": json.dumps({"totalItems": total})})
+
+    return reply
+
+
+def _api(route, rows):
+    return Recorder({route: _paged_api(rows, audit="ActionLogGetByParametersV2" in route)})
+
+
+async def _walk(monkeypatch, rec, tool, args):
+    ids, calls, cut = [], 0, 0
+    while True:
+        result = await _call(monkeypatch, rec, tool, args)
+        calls += 1
+        assert "retry_page_size" not in result, result.get("note")
+        cut += bool(result.get("truncated"))
+        ids += [r["id"] for r in result["items"]]
+        if result.get("next_offset") is None:
+            return ids, calls, cut
+        args = {k: v for k, v in args.items() if k != "pageNumber"} | {"offset": result["next_offset"]}
+        assert calls < 200
+
+
+@pytest.mark.parametrize("tool,route,extra", PAGED_TOOLS)
+async def test_cut_pages_continue_without_gaps_from_page_1(monkeypatch, tool, route, extra):
+    ids, _, cut = await _walk(monkeypatch, _api(route, ROWS), tool, extra | {"pageSize": 50})
+    assert cut > 0  # pages really were cut
+    assert ids == [r["id"] for r in ROWS]  # no gaps, no duplicates
+
+
+@pytest.mark.parametrize("tool,route,extra", PAGED_TOOLS)
+async def test_cut_pages_continue_without_gaps_from_a_later_page(monkeypatch, tool, route, extra):
+    ids, _, cut = await _walk(monkeypatch, _api(route, ROWS), tool, extra | {"pageNumber": 3, "pageSize": 40})
+    assert cut > 0
+    assert ids == [r["id"] for r in ROWS[80:]]
+
+
+@pytest.mark.parametrize("tool,route,extra", PAGED_TOOLS)
+@pytest.mark.parametrize("offset,size,page,first", [(30, 25, 2, "r030"), (50, 25, 3, "r050"), (0, 25, 1, "r000")])
+async def test_offset_reads_the_page_that_holds_it(monkeypatch, tool, route, extra, offset, size, page, first):
+    rec = _api(route, SMALL)
+    result = await _call(monkeypatch, rec, tool, extra | {"offset": offset, "pageSize": size})
+    assert (body(rec.requests[0])["pageNumber"], body(rec.requests[0])["pageSize"]) == (page, size)
+    assert result["items"][0]["id"] == first and result["offset"] == offset
+    assert result["next_offset"] == page * size  # rest of the page returned, next page starts after it
+
+
+@pytest.mark.parametrize("tool,route,extra", PAGED_TOOLS)
+async def test_offset_past_the_end_is_empty(monkeypatch, tool, route, extra):
+    result = await _call(monkeypatch, _api(route, SMALL), tool, extra | {"offset": 500, "pageSize": 25})
+    assert (result["count"], result["has_more"], result.get("next_offset")) == (0, False, None)
+
+
+@pytest.mark.parametrize("tool,route,extra", PAGED_TOOLS)
+async def test_offset_wins_over_page_number(monkeypatch, tool, route, extra):
+    rec = _api(route, SMALL)
+    result = await _call(monkeypatch, rec, tool, extra | {"offset": 10, "pageNumber": 4, "pageSize": 10})
+    assert body(rec.requests[0])["pageNumber"] == 2 and result["items"][0]["id"] == "r010"
+
+
+@pytest.mark.parametrize("tool,route,extra", PAGED_TOOLS)
+async def test_page_number_only_sends_the_same_request_as_before(monkeypatch, tool, route, extra):
+    rec = _api(route, SMALL)
+    result = await _call(monkeypatch, rec, tool, extra | {"pageNumber": 2, "pageSize": 25})
+    assert (body(rec.requests[0])["pageNumber"], body(rec.requests[0])["pageSize"]) == (2, 25)
+    assert [r["id"] for r in result["items"]] == [f"r{i:03d}" for i in range(25, 50)]
+    assert (result["page"], result["offset"], result["next_offset"], result["has_more"]) == (2, 25, 50, True)
+
+
+async def test_audit_search_total_from_an_offset_inside_the_last_page(monkeypatch):
+    rows = SMALL[:32]
+    rec = Recorder({"POST ActionLog/ActionLogGetByParametersV2": _paged_api(rows, audit=True)})
+    result = await _call(monkeypatch, rec, "threatlocker_audit_search", {"offset": 30, "pageSize": 25})
+    assert (result["count"], result["total"], result["has_more"]) == (2, 32, False)
+    past = await _call(monkeypatch, rec, "threatlocker_audit_search", {"offset": 40, "pageSize": 25})
+    assert past["count"] == 0 and past["total"] == 32  # page 2 still has rows, so the total is known
+
+
+async def test_approvals_all_status_note_survives_paging(monkeypatch):
+    rec = _api("POST ApprovalRequest/ApprovalRequestGetByParameters", SMALL)
+    result = await _call(monkeypatch, rec, "threatlocker_approvals_list", {"status": "all", "offset": 5})
+    assert result["note"].startswith("The API filters by one status")
+
+
+def _history_api(rows, seen):
+    def reply(request):
+        params = dict(request.url.params)
+        seen.append(params)
+        if "pageNumber" not in params:
+            return httpx.Response(200, json=rows)
+        number, size = int(params["pageNumber"]), int(params["pageSize"])
+        return httpx.Response(200, json=rows[(number - 1) * size : number * size])
+
+    return reply
+
+
+async def test_file_history_without_paging_is_unchanged_and_a_cut_result_continues(monkeypatch):
+    seen = []
+    rec = Recorder({"ActionLog/ActionLogGetAllForFileHistoryV2": _history_api(ROWS, seen)})
+    args = {"fullPath": "C:/x.exe", "hostname": "PC-01"}
+    first = await _call(monkeypatch, rec, "threatlocker_audit_file_history", args)
+    assert "pageNumber" not in seen[0] and first["truncated"] is True and "retry_page_size" not in first
+    ids, offset, calls = [h["id"] for h in first["history"]], first["next_offset"], 1
+    while offset is not None:
+        result = await _call(monkeypatch, rec, "threatlocker_audit_file_history", args | {"offset": offset})
+        ids += [h["id"] for h in result["history"]]
+        offset, calls = result.get("next_offset"), calls + 1
+        assert calls < 200
+    assert ids == [r["id"] for r in ROWS]
+
+
+async def test_file_history_offset_reads_the_page_that_holds_it(monkeypatch):
+    seen = []
+    rec = Recorder({"ActionLog/ActionLogGetAllForFileHistoryV2": _history_api(SMALL, seen)})
+    result = await _call(monkeypatch, rec, "threatlocker_audit_file_history", {"fullPath": "C:/x.exe", "hostname": "PC-01", "offset": 30})
+    assert (seen[0]["pageNumber"], seen[0]["pageSize"]) == ("2", "25")
+    assert result["history"][0]["id"] == "r030" and result["next_offset"] == 50

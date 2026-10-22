@@ -22,14 +22,15 @@ from pydantic import Field
 
 from ..api_client import ThreatLockerClient, ThreatLockerError
 from ._common import (
-    DEFAULT_PAGE_SIZE,
     READ_ONLY,
     ChildOrganizations,
     ClientFactory,
+    Offset,
     PageNumber,
     PageSize,
     compact,
     guid,
+    locate,
     page_result,
     rows,
     run_tool,
@@ -98,6 +99,7 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
         childOrganizations: ChildOrganizations = None,
         hostname: Annotated[str | None, Field(description="Only this computer (hostname).")] = None,
         actionType: Annotated[str | None, Field(description="Only this action type, e.g. execute, read, write, network.")] = None,
+        offset: Offset = None,
     ) -> str:
         """Search the unified audit: which files ran, were blocked or were permitted, where and when.
 
@@ -106,7 +108,7 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
         """
 
         async def action(client: ThreatLockerClient) -> dict:
-            number, size = pageNumber or 1, pageSize or DEFAULT_PAGE_SIZE
+            number, size, position = locate(offset, pageNumber, pageSize)
             start, end = search_window(startDate, endDate)
             body = compact(
                 {
@@ -122,14 +124,15 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
                 }
             )
             page = await client.post("ActionLog/ActionLogGetByParametersV2", body, headers={"usenewsearch": "true"})
-            result = page_result(page, number, size)
+            result = page_result(page, number, size, position)
             # The new search's totalItems is "rows up to this page + 1", not a total: keep it only
             # for has_more. The total is known only on a last page that has rows (or an empty
             # page 1); an empty page past the end says nothing about how many rows there are.
             result.pop("total", None)
+            page_rows = len(rows(page.data))
             if not result["has_more"]:
-                if result["count"] > 0 or number == 1:
-                    result["total"] = (number - 1) * size + result["count"]
+                if page_rows > 0 or number == 1:
+                    result["total"] = (number - 1) * size + page_rows
                 else:
                     result["note"] = (
                         f"Page {number} is past the last page of results; the total is given on the "
@@ -175,6 +178,7 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
         sourceTableId: SourceTableId = None,
         pageNumber: PageNumber = None,
         pageSize: PageSize = None,
+        offset: Offset = None,
     ) -> str:
         """Get the audit history of one file on one computer (needs fullPath plus hostname or computerId)."""
 
@@ -188,11 +192,26 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
                     "hostname": host or None,
                     "computerId": guid(computerId, "computerId") if computerId else None,
                     "sourceTableId": sourceTableId,
-                    "pageNumber": pageNumber,
-                    "pageSize": pageSize,
                 }
             )
-            history = rows(await client.get("ActionLog/ActionLogGetAllForFileHistoryV2", params))
-            return {"history": history, "count": len(history)}
+            if offset is None and pageNumber is None and pageSize is None:
+                # Unpaged, as before; a cut result continues by offset (paged from there on).
+                history = rows(await client.get("ActionLog/ActionLogGetAllForFileHistoryV2", params))
+                return {"history": history, "count": len(history), "_resume": {"key": "next_offset", "start": 0}}
+            number, size, start = locate(offset, pageNumber, pageSize)
+            params |= {"pageNumber": number, "pageSize": size}
+            page_rows = rows(await client.get("ActionLog/ActionLogGetAllForFileHistoryV2", params))
+            history = page_rows[start - (number - 1) * size :]
+            more = len(page_rows) >= size
+            return {
+                "history": history,
+                "count": len(history),
+                "page": number,
+                "page_size": size,
+                "offset": start,
+                "has_more": more,
+                "next_offset": start + len(history) if more else None,
+                "_resume": {"key": "next_offset", "start": start},
+            }
 
         return await run_tool("threatlocker_audit_file_history", client_factory, action)
