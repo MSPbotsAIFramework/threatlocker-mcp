@@ -288,3 +288,60 @@ async def test_move_targets(monkeypatch):
     rec = Recorder({"Organization/OrganizationGetForMoveComputers": {"organizations": [{"name": "B"}]}})
     result = await _call(monkeypatch, rec, "threatlocker_organizations_for_move_computers", {})
     assert result == {"organizations": [{"name": "B"}], "count": 1}
+
+
+
+# ---- PRD-20958: audit_get without sourceTableId -------------------------------------------------
+
+
+async def test_audit_get_without_table_uses_table_1(monkeypatch):
+    rec = Recorder({"ActionLog/ActionLogGetByIdV2": {"fullPath": "C:\\x.exe"}})
+    result = await _call(monkeypatch, rec, "threatlocker_audit_get", {"eActionLogId": "49e68408-f10f-40af-9e60-f140980b39f4"})
+    assert [r.url.params["sourceTableId"] for r in rec.requests] == ["1"]
+    assert result == {"sourceTableId": 1, "fullPath": "C:\\x.exe"}
+
+
+async def test_audit_get_falls_back_to_table_2(monkeypatch):
+    def reply(request):
+        if request.url.params["sourceTableId"] == "1":
+            return httpx.Response(500, json={"message": "A problem occurred with the request"})
+        return httpx.Response(200, json={"fullPath": "C:\\blocked.exe"})
+
+    rec = Recorder({"ActionLog/ActionLogGetByIdV2": reply})
+    result = await _call(monkeypatch, rec, "threatlocker_audit_get", {"eActionLogId": "b1aa6996"})
+    assert result["sourceTableId"] == 2 and result["fullPath"] == "C:\\blocked.exe"
+    assert rec.requests[-1].url.params["sourceTableId"] == "2"
+
+
+async def test_audit_get_not_in_default_tables_is_not_found(monkeypatch):
+    rec = Recorder({"ActionLog/ActionLogGetByIdV2": lambda r: httpx.Response(200, json=None)})
+    result = await _call(monkeypatch, rec, "threatlocker_audit_get", {"eActionLogId": "b1aa6996"})
+    assert result["error"]["code"] == "not_found" and "sourceTableId" in result["error"]["message"]
+
+
+async def test_audit_get_permission_error_is_not_retried_on_another_table(monkeypatch):
+    rec = Recorder({"ActionLog/ActionLogGetByIdV2": lambda r: httpx.Response(401, json={"message": "No permission"})})
+    result = await _call(monkeypatch, rec, "threatlocker_audit_get", {"eActionLogId": "b1aa6996"})
+    assert result["error"]["code"] == "unauthorized" and len(rec.requests) == 1
+
+
+async def test_audit_get_explicit_table_is_used_as_given(monkeypatch):
+    rec = Recorder({"ActionLog/ActionLogGetByIdV2": {"fullPath": "C:\\x.exe"}})
+    await _call(monkeypatch, rec, "threatlocker_audit_get", {"eActionLogId": "b1aa6996", "sourceTableId": 3})
+    assert [r.url.params["sourceTableId"] for r in rec.requests] == ["3"]
+
+
+# ---- PRD-20959: audit_search total ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "number,rows,total_items,expected",
+    [(1, 3, 4, None), (2, 3, 7, None), (10, 3, 31, None), (4, 2, 11, 11)],
+)
+async def test_audit_search_reports_total_only_on_the_last_page(monkeypatch, number, rows, total_items, expected):
+    reply = {"data": [{"eActionLogId": f"e{i}"} for i in range(rows)], "totalItems": total_items}
+    rec = Recorder({"POST ActionLog/ActionLogGetByParametersV2": lambda r: httpx.Response(
+        200, json=reply["data"], headers={"pagination": json.dumps({"totalItems": total_items})})})
+    result = await _call(monkeypatch, rec, "threatlocker_audit_search", {"pageNumber": number, "pageSize": 3})
+    assert result.get("total") == expected
+    assert result["has_more"] is (expected is None)

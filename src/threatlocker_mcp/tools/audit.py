@@ -20,7 +20,7 @@ from typing import Annotated, Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
-from ..api_client import ThreatLockerClient
+from ..api_client import ThreatLockerClient, ThreatLockerError
 from ._common import (
     DEFAULT_PAGE_SIZE,
     READ_ONLY,
@@ -38,6 +38,29 @@ from ._common import (
 SOURCE_TABLES = "1 = ActionLog, 2 = DenyActionLog, 3 = BaselineActionLog, 4 = EventLogActionLog"
 SourceTableId = Annotated[int | None, Field(description=f"Source table of the row: {SOURCE_TABLES}.", ge=1, le=4)]
 _NUMERIC = re.compile(r"^-?\d+$")
+# Audit search reads source table 1 (ActionLogParamsDto.sourceTableId defaults to 1) and its rows
+# carry no table id, so a lookup without one tries 1, then 2. Without any, the API answers 500.
+_DEFAULT_TABLES = (1, 2)
+
+
+async def get_audit_entry(client: ThreatLockerClient, ident: str, table: int | None) -> Any:
+    """ActionLogGetByIdV2 for one eActionLogId, trying the default tables when none is given."""
+    if table is not None:
+        return await client.get("ActionLog/ActionLogGetByIdV2", {"eActionLogId": ident, "sourceTableId": table})
+    for candidate in _DEFAULT_TABLES:
+        try:
+            entry = await client.get("ActionLog/ActionLogGetByIdV2", {"eActionLogId": ident, "sourceTableId": candidate})
+        except ThreatLockerError as e:
+            if e.status_code not in (400, 404) and e.status_code < 500:
+                raise  # e.g. 401 no permission: the same for every table
+            continue
+        if entry:
+            return {"sourceTableId": candidate, **entry} if isinstance(entry, dict) else entry
+    raise ThreatLockerError(
+        404,
+        f"No audit entry {ident} in source tables 1 (ActionLog) or 2 (DenyActionLog); "
+        "pass sourceTableId 3 (BaselineActionLog) or 4 (EventLogActionLog) if it comes from those.",
+    )
 
 
 def _instant(value: str | None, name: str) -> datetime | None:
@@ -78,7 +101,8 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
     ) -> str:
         """Search the unified audit: which files ran, were blocked or were permitted, where and when.
 
-        Rows carry eActionLogId for threatlocker_audit_get.
+        Rows carry eActionLogId for threatlocker_audit_get. The API reports no total while more
+        pages exist: total is given only on the last page (has_more false).
         """
 
         async def action(client: ThreatLockerClient) -> dict:
@@ -98,7 +122,13 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
                 }
             )
             page = await client.post("ActionLog/ActionLogGetByParametersV2", body, headers={"usenewsearch": "true"})
-            return {"window": {"start": start, "end": end}, **page_result(page, number, size)}
+            result = page_result(page, number, size)
+            # The new search's totalItems is "rows up to this page + 1", not a total: keep it only
+            # for has_more, and give the real total once the last page is reached.
+            result.pop("total", None)
+            if not result["has_more"]:
+                result["total"] = (number - 1) * size + result["count"]
+            return {"window": {"start": start, "end": end}, **result}
 
         return await run_tool("threatlocker_audit_search", client_factory, action)
 
@@ -112,7 +142,10 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
             str | None, Field(description="Deprecated alias for eActionLogId; the numeric actionLogId is not accepted.")
         ] = None,
     ) -> str:
-        """Get one audit entry in full by its eActionLogId (not the numeric actionLogId)."""
+        """Get one audit entry in full by its eActionLogId (not the numeric actionLogId).
+
+        For a threatlocker_audit_search row, pass only eActionLogId: tables 1 then 2 are tried.
+        """
 
         async def action(client: ThreatLockerClient) -> Any:
             ident = (eActionLogId or actionLogId or "").strip()
@@ -123,7 +156,7 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
                     "That is the numeric actionLogId; this lookup needs the row's eActionLogId string "
                     "(from threatlocker_audit_search)."
                 )
-            return await client.get("ActionLog/ActionLogGetByIdV2", compact({"eActionLogId": ident, "sourceTableId": sourceTableId}))
+            return await get_audit_entry(client, ident, sourceTableId)
 
         return await run_tool("threatlocker_audit_get", client_factory, action)
 
