@@ -4,7 +4,9 @@ An [MCP](https://modelcontextprotocol.io) server for the [ThreatLocker](https://
 Portal API. ThreatLocker is a zero-trust endpoint security platform: only approved software
 runs on protected computers, and blocked users raise approval requests that the MSP reviews.
 This server lets an AI agent read computers and their check-ins, computer groups, approval
-requests, the unified audit log and child organizations. It is read-only.
+requests, the unified audit log and child organizations; approve, reject or ignore an approval
+request; and read a Ringfencing policy, check Ringfencing eligibility, and opt the organization
+into Ringfencing.
 
 - Transport: MCP Streamable HTTP at `POST /mcp`, health probe at `GET /health`
 - Stateless and multi-tenant: credentials arrive on every request as HTTP headers and are
@@ -95,7 +97,9 @@ Links: [connect.mspbots.ai](https://connect.mspbots.ai) · [mspbots.ai](https://
 Where to get them:
 
 - In the ThreatLocker portal an administrator creates an **API user** and its API key; grant it
-  read permissions for computers, approval requests, the unified audit and organizations.
+  read permissions for computers, approval requests, the unified audit and organizations, plus
+  **write/approval** permission if the agent should approve, reject or ignore approval requests,
+  or opt the organization into Ringfencing.
 - The organization id is shown in the portal for each organization; use the parent
   organization's id to work across its child organizations (`childOrganizations: true`).
 - The instance is the letter in your portal address (for example `portal.g.threatlocker.com`
@@ -111,7 +115,10 @@ unusable instance value does not block the request, and tools return `invalid_ar
 
 ## Tools
 
-All tools return a JSON string and are read-only. Paged tools take `pageNumber` (from 1) and
+All tools return a JSON string. All but 4 are read-only; `threatlocker_approvals_approve`,
+`threatlocker_approvals_reject`, `threatlocker_approvals_ignore` and `threatlocker_ringfence_opt_in`
+change state in ThreatLocker and are marked accordingly in their tool annotations
+(`readOnlyHint=false`, `destructiveHint=true`). Paged tools take `pageNumber` (from 1) and
 `pageSize` (default 25) and return `{items, count, page, page_size, total, has_more, offset,
 next_offset}`. They also take `offset` (record position from 0, overrides `pageNumber`): pass
 `next_offset` as `offset` for the next records. ThreatLocker pages by number only, so when a page
@@ -132,6 +139,12 @@ Computer, group, organization and approval request ids are GUIDs.
 | `threatlocker_approvals_get` | One approval request: requester, computer, file, hash, certificate, justification | **approvalRequestId** |
 | `threatlocker_approvals_pending_count` | Count of pending approval requests | - |
 | `threatlocker_approvals_get_permit_application` | What approving a request would permit | **approvalRequestId** |
+| `threatlocker_approvals_approve` | Approve a pending request, authorizing the software to run | **approvalRequestId**, message |
+| `threatlocker_approvals_reject` | Reject a pending request, denying the software | **approvalRequestId**, **reason** |
+| `threatlocker_approvals_ignore` | Ignore a pending request, leaving it undecided | **approvalRequestId**, **reason** |
+| `threatlocker_ringfence_get` | One Ringfencing policy's current data | **ringfencePolicyId** |
+| `threatlocker_ringfence_eligibility` | Whether the organization (and its computers) can use Ringfencing | - |
+| `threatlocker_ringfence_opt_in` | Enroll the organization into Ringfencing | - |
 | `threatlocker_audit_search` | Search the unified audit (what ran or was blocked); default window the last 24 h. `total` is given only on the last page that has rows (an empty page past the end has none): the API's count while more pages exist is not a total | searchText (file path contains), startDate, endDate, pageNumber, pageSize, childOrganizations, hostname, actionType |
 | `threatlocker_audit_get` | One audit entry in full; without sourceTableId, tables 1 then 2 are tried (search rows come from table 1) | eActionLogId (from a search row), sourceTableId (1-4), actionLogId (deprecated alias) |
 | `threatlocker_audit_file_history` | Audit history of one file on one computer | **fullPath**, hostname or computerId, sourceTableId, pageNumber, pageSize |
@@ -196,8 +209,17 @@ uv run pytest
 
 ## Delivery notes
 
-- **Tool count (17).** Kept as is because the tool names are an existing contract.
-- **Read-only.** No tool approves, denies or changes anything in ThreatLocker.
+- **Tool count (23).** The original 17 tool names are kept as-is (existing contract); PRD-21247
+  added 6 more: `threatlocker_approvals_approve/reject/ignore` and
+  `threatlocker_ringfence_get/eligibility/opt_in`.
+- **Mutating surface (PRD-21247).** The 4 tools listed above under "Tools" that are not read-only
+  are this connector's first mutating actions: deciding an approval request, and opting an
+  organization into Ringfencing. Everything else is still read-only.
+- **Ringfencing scope is bounded by the vendor API.** The public Portal API has no endpoint to
+  create or edit the content of a Ringfencing rule (which processes/network/storage a fenced
+  application may touch) — only to read one policy, check eligibility, and opt the organization
+  in. `threatlocker_ringfence_opt_in` is the only "manage" action available for a first version;
+  if ThreatLocker later publishes a write endpoint for rule content, that is a new ticket.
 - **Install key.** `threatlocker_organizations_get_auth_key` returns a secret that lets anyone
   enroll computers; its description tells the agent to call it only on explicit request and
   not to repeat it elsewhere.

@@ -32,12 +32,15 @@ DOMAINS: dict[str, tuple[str, list[str]]] = {
         ["threatlocker_computer_groups_list", "threatlocker_computer_groups_dropdown"],
     ),
     "approval_requests": (
-        "Requests to allow blocked software.",
+        "Requests to allow blocked software: read them, and decide them (approve/reject/ignore).",
         [
             "threatlocker_approvals_list",
             "threatlocker_approvals_get",
             "threatlocker_approvals_pending_count",
             "threatlocker_approvals_get_permit_application",
+            "threatlocker_approvals_approve",
+            "threatlocker_approvals_reject",
+            "threatlocker_approvals_ignore",
         ],
     ),
     "audit_log": (
@@ -52,6 +55,15 @@ DOMAINS: dict[str, tuple[str, list[str]]] = {
             "threatlocker_organizations_for_move_computers",
         ],
     ),
+    "ringfencing": (
+        "Read a Ringfencing policy, check eligibility, and opt the organization in. The public API "
+        "has no endpoint to edit a policy's rule content.",
+        [
+            "threatlocker_ringfence_get",
+            "threatlocker_ringfence_eligibility",
+            "threatlocker_ringfence_opt_in",
+        ],
+    ),
 }
 
 
@@ -59,7 +71,7 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
     @mcp.tool(annotations=LOCAL)
     async def threatlocker_navigate(
         domain: Annotated[
-            Literal["computers", "computer_groups", "approval_requests", "audit_log", "organizations"],
+            Literal["computers", "computer_groups", "approval_requests", "audit_log", "organizations", "ringfencing"],
             Field(description="Area to describe."),
         ],
     ) -> str:

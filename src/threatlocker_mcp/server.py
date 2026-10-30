@@ -48,15 +48,19 @@ request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("threatlock
 INSTRUCTIONS = (
     "ThreatLocker is a zero-trust endpoint security platform: only approved "
     "software may run on protected computers. When something is blocked, the "
-    "user can raise an approval request that an MSP technician reviews. This "
-    "server is read-only.\n"
+    "user can raise an approval request that an MSP technician reviews or "
+    "decides (approve/reject/ignore).\n"
     "Usage:\n"
     "- Machines: threatlocker_computers_list(searchText) -> "
     "threatlocker_computers_get / threatlocker_computers_get_checkins "
     "(computer ids are GUIDs).\n"
     "- Pending work: threatlocker_approvals_pending_count, "
     "threatlocker_approvals_list(status) -> threatlocker_approvals_get and "
-    "threatlocker_approvals_get_permit_application (what approving would allow).\n"
+    "threatlocker_approvals_get_permit_application (what approving would allow) "
+    "-> threatlocker_approvals_approve / _reject / _ignore to decide it.\n"
+    "- Ringfencing: threatlocker_ringfence_get(id), threatlocker_ringfence_eligibility, "
+    "threatlocker_ringfence_opt_in (enroll the organization; editing a policy's rule "
+    "content has no public API endpoint).\n"
     "- Why was something blocked or allowed: threatlocker_audit_search "
     "(date window, default last 24 h; searchText matches the file path, "
     "hostname narrows to one computer) -> threatlocker_audit_get(eActionLogId); "
@@ -162,9 +166,9 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
 
     client_factory: Callable[[], ThreatLockerClient | None] = get_client_from_context
 
-    from .tools import approvals, audit, computers, navigation, organizations
+    from .tools import approvals, audit, computers, navigation, organizations, ringfence
 
-    for module in (navigation, computers, approvals, audit, organizations):
+    for module in (navigation, computers, approvals, audit, organizations, ringfence):
         module.register(mcp, client_factory)
 
     return mcp

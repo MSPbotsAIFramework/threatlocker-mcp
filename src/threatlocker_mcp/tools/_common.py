@@ -31,6 +31,11 @@ ClientFactory = Callable[[], ThreatLockerClient | None]
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=True)
 LOCAL = ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False)
+# PRD-21247: the first mutating tools this connector exposes (approve/reject/ignore an
+# approval request, opt a Ringfencing in). Not idempotent (acting twice on an
+# already-resolved request is an upstream error, not a no-op) and destructive enough
+# that MCP clients that respect annotations should not auto-retry or auto-approve.
+MUTATING = ToolAnnotations(readOnlyHint=False, idempotentHint=False, destructiveHint=True, openWorldHint=True)
 
 NOT_CONFIGURED = error_envelope(
     "not_configured",

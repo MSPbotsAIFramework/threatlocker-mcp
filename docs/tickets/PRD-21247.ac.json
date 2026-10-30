@@ -1,0 +1,121 @@
+[
+  {
+    "id": "TC-TL-001",
+    "ac": "AC1",
+    "text": "Given a pending ThreatLocker approval request id, When the agent calls threatlocker_approvals_approve with that id, Then the result names the approval request id and action: approve",
+    "type": "auto",
+    "tests": ["tests/test_approvals_write.py::test_approve_pending_request_returns_success"]
+  },
+  {
+    "id": "TC-TL-002",
+    "ac": "AC1",
+    "text": "Given a non-existent or already-resolved approval request id, When threatlocker_approvals_approve is called, Then it returns a structured error envelope, not an exception",
+    "type": "auto",
+    "tests": ["tests/test_approvals_write.py::test_approve_unknown_request_returns_error_envelope"]
+  },
+  {
+    "id": "TC-TL-003",
+    "ac": "AC2",
+    "text": "Given a pending approval request id and a reason, When the agent calls threatlocker_approvals_reject, Then the result names the approval request id and action: reject",
+    "type": "auto",
+    "tests": ["tests/test_approvals_write.py::test_reject_pending_request_returns_success"]
+  },
+  {
+    "id": "TC-TL-004",
+    "ac": "AC2",
+    "text": "Given an approval request id that ApprovalRequestGetById 404s on, When threatlocker_approvals_reject is called, Then it returns a not_found envelope and never calls the reject endpoint",
+    "type": "auto",
+    "tests": ["tests/test_approvals_write.py::test_reject_unknown_request_never_calls_update_for_reject"]
+  },
+  {
+    "id": "TC-TL-005",
+    "ac": "AC3",
+    "text": "Given a pending approval request id and a reason, When the agent calls threatlocker_approvals_ignore, Then the result names the approval request id and action: ignore",
+    "type": "auto",
+    "tests": ["tests/test_approvals_write.py::test_ignore_pending_request_returns_success"]
+  },
+  {
+    "id": "TC-TL-006",
+    "ac": "AC3",
+    "text": "Given an approval request id that ApprovalRequestGetById 404s on, When threatlocker_approvals_ignore is called, Then it returns a not_found envelope and never calls the ignore endpoint",
+    "type": "auto",
+    "tests": ["tests/test_approvals_write.py::test_ignore_unknown_request_never_calls_update_for_ignore"]
+  },
+  {
+    "id": "TC-TL-007",
+    "ac": "AC4",
+    "text": "Given a syntactically invalid GUID, When any of approve/reject/ignore is called with it, Then it returns invalid_argument without making any HTTP call to ThreatLocker",
+    "type": "auto",
+    "tests": ["tests/test_approvals_write.py::test_malformed_approval_request_id_never_calls_api"]
+  },
+  {
+    "id": "TC-TL-008",
+    "ac": "AC5",
+    "text": "Given a known ringfencing policy id, When the agent calls threatlocker_ringfence_get, Then it returns that policy's data",
+    "type": "auto",
+    "tests": ["tests/test_ringfence.py::test_get_known_policy_returns_data"]
+  },
+  {
+    "id": "TC-TL-009",
+    "ac": "AC5",
+    "text": "Given an unknown ringfencing policy id, When the agent calls threatlocker_ringfence_get, Then it returns a not_found error envelope",
+    "type": "auto",
+    "tests": ["tests/test_ringfence.py::test_get_unknown_policy_returns_not_found"]
+  },
+  {
+    "id": "TC-TL-010",
+    "ac": "AC6",
+    "text": "Given valid credentials, When the agent calls threatlocker_ringfence_eligibility, Then it returns the organization's Ringfencing eligibility",
+    "type": "auto",
+    "tests": ["tests/test_ringfence.py::test_eligibility_returns_result"]
+  },
+  {
+    "id": "TC-TL-011",
+    "ac": "AC7",
+    "text": "Given an organization not yet enrolled in Ringfencing, When the agent calls threatlocker_ringfence_opt_in, Then it returns a success result naming action: opt_in",
+    "type": "auto",
+    "tests": ["tests/test_ringfence.py::test_opt_in_returns_success"]
+  },
+  {
+    "id": "TC-TL-012",
+    "ac": "AC7",
+    "type": "manual",
+    "text": "Given an organization already enrolled in Ringfencing, When the agent calls threatlocker_ringfence_opt_in again, Then the tool returns whatever ThreatLocker reports (success/no-op/error) without crashing",
+    "steps": [
+      "Use a real ThreatLocker vendor test organization already enrolled in Ringfencing",
+      "Call POST /mcp tools/call threatlocker_ringfence_opt_in with that organization's credentials",
+      "Inspect the HTTP status and tool response"
+    ],
+    "expect": "Tool returns a JSON result (success, no-op, or a structured error envelope) — no unhandled exception, no 5xx from the MCP server itself",
+    "result": "untested",
+    "evidence": "needs a real vendor account; not run in this design/dev pass per mcp-track.md section 2.5 (missing test account is not a blocker)"
+  },
+  {
+    "id": "TC-TL-013",
+    "ac": "AC8",
+    "text": "Given a call to any of the 6 new tools with no ThreatLocker headers, When the tool runs, Then it returns the same not_configured envelope the existing read tools return",
+    "type": "auto",
+    "tests": ["tests/test_approvals_write.py::test_new_tools_without_credentials_return_not_configured", "tests/test_ringfence.py::test_new_tools_without_credentials_return_not_configured"]
+  },
+  {
+    "id": "TC-TL-014",
+    "ac": "AC9",
+    "text": "Given two sequential calls with two different X-Threatlocker-Organization-Id values, When either calls approve/reject/ignore/opt_in, Then each call's ManagedOrganizationId header equals only that call's own organization id, never the other tenant's",
+    "type": "auto",
+    "tests": ["tests/test_approvals_write.py::test_two_organizations_never_cross_managed_organization_id", "tests/test_ringfence.py::test_two_organizations_never_cross_managed_organization_id"]
+  },
+  {
+    "id": "TC-TL-015",
+    "ac": "AC10",
+    "text": "Given any of the 6 new tools succeeds, When its result is returned, Then the result includes the id acted on and the action name (no silently empty success result)",
+    "type": "auto",
+    "tests": ["tests/test_approvals_write.py::test_success_results_name_id_and_action", "tests/test_ringfence.py::test_success_results_name_id_and_action"]
+  },
+  {
+    "id": "TC-TL-016",
+    "ac": "AC1",
+    "text": "Given the updated server, When tools/list is called, Then all 17 existing tool names keep their existing required parameters and the 6 new tool names are present",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_tool_names_are_stable", "tests/test_tools.py::test_required_params"]
+  }
+]

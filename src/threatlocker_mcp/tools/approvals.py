@@ -20,6 +20,7 @@ from pydantic import Field
 
 from ..api_client import ThreatLockerClient
 from ._common import (
+    MUTATING,
     READ_ONLY,
     ChildOrganizations,
     ClientFactory,
@@ -45,6 +46,8 @@ STATUS_IDS = {
     "selfapproved": 16,
 }
 ApprovalRequestId = Annotated[str, Field(description="Approval request id (GUID) from threatlocker_approvals_list.", min_length=1)]
+ApprovalMessage = Annotated[str | None, Field(description="Optional message recorded with the approval.")]
+ApprovalReason = Annotated[str, Field(description="Reason recorded for this decision.", min_length=1)]
 
 
 def status_id(status: str | None) -> int:
@@ -125,3 +128,47 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
             )
 
         return await run_tool("threatlocker_approvals_get_permit_application", client_factory, action)
+
+    @mcp.tool(annotations=MUTATING)
+    async def threatlocker_approvals_approve(approvalRequestId: ApprovalRequestId, message: ApprovalMessage = None) -> str:
+        """Approve a pending approval request, authorizing the blocked software to run."""
+
+        async def action(client: ThreatLockerClient) -> dict:
+            rid = guid(approvalRequestId, "approvalRequestId")
+            result = await client.post(
+                "ApprovalRequest/ApprovalRequestAuthorizeForPermitById",
+                {"approvalRequestId": rid, "message": message or ""},
+                idempotent=False,
+            )
+            return {"approvalRequestId": rid, "action": "approve", "result": result.data}
+
+        return await run_tool("threatlocker_approvals_approve", client_factory, action)
+
+    @mcp.tool(annotations=MUTATING)
+    async def threatlocker_approvals_reject(approvalRequestId: ApprovalRequestId, reason: ApprovalReason) -> str:
+        """Reject a pending approval request, denying the blocked software."""
+
+        async def action(client: ThreatLockerClient) -> dict:
+            rid = guid(approvalRequestId, "approvalRequestId")
+            # Fetch the full DTO first: the reject endpoint takes it back whole, and a 404
+            # here (unknown/already-gone id) surfaces as not_found without ever calling
+            # reject, so no partial state change happens (AC4).
+            dto = await client.get("ApprovalRequest/ApprovalRequestGetById", {"approvalRequestId": rid})
+            body = {"approvalRequestDtos": [dto], "responseReason": reason, "notifyOnResponse": False}
+            result = await client.post("ApprovalRequest/ApprovalRequestUpdateForReject", body, idempotent=False)
+            return {"approvalRequestId": rid, "action": "reject", "result": result.data}
+
+        return await run_tool("threatlocker_approvals_reject", client_factory, action)
+
+    @mcp.tool(annotations=MUTATING)
+    async def threatlocker_approvals_ignore(approvalRequestId: ApprovalRequestId, reason: ApprovalReason) -> str:
+        """Ignore a pending approval request, leaving the software blocked without a decision."""
+
+        async def action(client: ThreatLockerClient) -> dict:
+            rid = guid(approvalRequestId, "approvalRequestId")
+            dto = await client.get("ApprovalRequest/ApprovalRequestGetById", {"approvalRequestId": rid})
+            body = {"approvalRequestDtos": [dto], "ignoreReason": reason, "notifyOnIgnore": False}
+            result = await client.post("ApprovalRequest/ApprovalRequestUpdateForIgnore", body, idempotent=False)
+            return {"approvalRequestId": rid, "action": "ignore", "result": result.data}
+
+        return await run_tool("threatlocker_approvals_ignore", client_factory, action)
