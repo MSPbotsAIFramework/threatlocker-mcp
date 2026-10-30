@@ -204,6 +204,41 @@ async def test_two_organizations_never_cross_managed_organization_id(monkeypatch
     assert org_ids[len(org_ids) // 2 :] == [ORG_B] * (len(org_ids) // 2)
 
 
+@pytest.mark.parametrize(
+    "tool,args,mutating_path",
+    [
+        (
+            "threatlocker_approvals_approve",
+            {"approvalRequestId": REQUEST_ID},
+            "ApprovalRequest/ApprovalRequestAuthorizeForPermitById",
+        ),
+        (
+            "threatlocker_approvals_reject",
+            {"approvalRequestId": REQUEST_ID, "reason": "x"},
+            "ApprovalRequest/ApprovalRequestUpdateForReject",
+        ),
+        (
+            "threatlocker_approvals_ignore",
+            {"approvalRequestId": REQUEST_ID, "reason": "x"},
+            "ApprovalRequest/ApprovalRequestUpdateForIgnore",
+        ),
+    ],
+)
+async def test_transient_failure_on_the_mutating_call_is_not_retried(monkeypatch, tool, args, mutating_path):
+    # PRD-21247 review round 1: these 3 tools call client.post(..., idempotent=False), so a
+    # transient 503 on the write itself must surface as a failure instead of being silently
+    # resent (a lost response after a successful approve/reject/ignore must not be re-applied).
+    rec = Recorder(
+        {
+            "GET ApprovalRequest/ApprovalRequestGetById": PENDING_DTO,
+            f"POST {mutating_path}": lambda r: httpx.Response(503),
+        }
+    )
+    result = await _call(monkeypatch, rec, tool, args)
+    assert result["error"]["code"] == "upstream_error"
+    assert len(rec.calls(mutating_path)) == 1
+
+
 async def test_success_results_name_id_and_action(monkeypatch):
     rec = Recorder(
         {

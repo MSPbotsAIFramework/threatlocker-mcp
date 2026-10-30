@@ -138,6 +138,7 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
             result = await client.post(
                 "ApprovalRequest/ApprovalRequestAuthorizeForPermitById",
                 {"approvalRequestId": rid, "message": message or ""},
+                idempotent=False,
             )
             return {"approvalRequestId": rid, "action": "approve", "result": result.data}
 
@@ -154,7 +155,7 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
             # reject, so no partial state change happens (AC4).
             dto = await client.get("ApprovalRequest/ApprovalRequestGetById", {"approvalRequestId": rid})
             body = {"approvalRequestDtos": [dto], "responseReason": reason, "notifyOnResponse": False}
-            result = await client.post("ApprovalRequest/ApprovalRequestUpdateForReject", body)
+            result = await client.post("ApprovalRequest/ApprovalRequestUpdateForReject", body, idempotent=False)
             return {"approvalRequestId": rid, "action": "reject", "result": result.data}
 
         return await run_tool("threatlocker_approvals_reject", client_factory, action)
@@ -167,7 +168,7 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
             rid = guid(approvalRequestId, "approvalRequestId")
             dto = await client.get("ApprovalRequest/ApprovalRequestGetById", {"approvalRequestId": rid})
             body = {"approvalRequestDtos": [dto], "ignoreReason": reason, "notifyOnIgnore": False}
-            result = await client.post("ApprovalRequest/ApprovalRequestUpdateForIgnore", body)
+            result = await client.post("ApprovalRequest/ApprovalRequestUpdateForIgnore", body, idempotent=False)
             return {"approvalRequestId": rid, "action": "ignore", "result": result.data}
 
         return await run_tool("threatlocker_approvals_ignore", client_factory, action)

@@ -113,6 +113,15 @@ async def test_opt_in_returns_success(monkeypatch):
     assert rec.requests[0].content == b""
 
 
+async def test_opt_in_transient_failure_is_not_retried(monkeypatch):
+    # PRD-21247 review round 1: opt_in calls client.post(..., idempotent=False) -- a transient
+    # 503 on the write itself must surface as a failure instead of being silently resent.
+    rec = Recorder({"POST RingfencePolicy/OptIn": lambda r: httpx.Response(503)})
+    result = await _call(monkeypatch, rec, "threatlocker_ringfence_opt_in", {})
+    assert result["error"]["code"] == "upstream_error"
+    assert len(rec.requests) == 1
+
+
 # ---- shared across the 3 new ringfencing tools ---------------------------------
 
 

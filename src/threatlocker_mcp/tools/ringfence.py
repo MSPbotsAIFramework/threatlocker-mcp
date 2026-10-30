@@ -54,7 +54,7 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
         """Enroll the organization into Ringfencing."""
 
         async def action(client: ThreatLockerClient) -> dict:
-            result = await client.post("RingfencePolicy/OptIn", None)
+            result = await client.post("RingfencePolicy/OptIn", None, idempotent=False)
             return {"action": "opt_in", "result": result.data}
 
         return await run_tool("threatlocker_ringfence_opt_in", client_factory, action)

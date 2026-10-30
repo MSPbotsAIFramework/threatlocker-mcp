@@ -138,6 +138,38 @@ async def test_retries_5xx_then_succeeds():
     assert len(rec.requests) == 2
 
 
+# PRD-21247 review round 1: the 4 mutating calls (approve/reject/ignore, Ringfencing
+# opt-in) pass idempotent=False and must not be silently resent on a transient failure --
+# a lost response after a successful write must surface as a failure, not a duplicate send.
+async def test_non_idempotent_post_is_not_retried_on_5xx():
+    rec = Recorder({"RingfencePolicy/OptIn": lambda r: httpx.Response(503)})
+    with pytest.raises(ThreatLockerError) as err:
+        await _client(rec).post("RingfencePolicy/OptIn", None, idempotent=False)
+    assert err.value.status_code == 503
+    assert len(rec.requests) == 1
+
+
+async def test_non_idempotent_post_is_not_retried_on_timeout():
+    def raise_timeout(request):
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    rec = Recorder({"RingfencePolicy/OptIn": raise_timeout})
+    with pytest.raises(ThreatLockerError) as err:
+        await _client(rec).post("RingfencePolicy/OptIn", None, idempotent=False)
+    assert err.value.status_code == 0
+    assert len(rec.requests) == 1
+
+
+async def test_idempotent_post_default_still_retries_on_5xx():
+    # Default (idempotent=True) behavior for a POST is unchanged by this fix -- only the 4
+    # mutating call sites opt out explicitly.
+    replies = iter([httpx.Response(503), httpx.Response(200, json={"eligible": True})])
+    rec = Recorder({"RingfencePolicy/Eligibility": lambda r: next(replies)})
+    result = await _client(rec).post("RingfencePolicy/Eligibility", None)
+    assert result.data == {"eligible": True}
+    assert len(rec.requests) == 2
+
+
 async def test_error_message_from_body():
     rec = Recorder(default=lambda r: httpx.Response(417, json="Missing Parameters. Unable to load details."))
     with pytest.raises(ThreatLockerError) as err:

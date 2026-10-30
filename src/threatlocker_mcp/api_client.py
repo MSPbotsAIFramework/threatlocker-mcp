@@ -196,8 +196,14 @@ class ThreatLockerClient:
     async def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         return (await self.request("GET", path, params=params)).data
 
-    async def post(self, path: str, body: Any, headers: dict[str, str] | None = None) -> Page:
-        return await self.request("POST", path, body=body, headers=headers)
+    async def post(
+        self,
+        path: str,
+        body: Any,
+        headers: dict[str, str] | None = None,
+        idempotent: bool = True,
+    ) -> Page:
+        return await self.request("POST", path, body=body, headers=headers, idempotent=idempotent)
 
     async def request(
         self,
@@ -206,6 +212,7 @@ class ThreatLockerClient:
         params: dict[str, Any] | None = None,
         body: Any = None,
         headers: dict[str, str] | None = None,
+        idempotent: bool = True,
     ) -> Page:
         instance = await self.resolve_instance()
         url = f"{API_URL_TEMPLATE.format(instance=instance)}/{path.strip('/')}"
@@ -231,9 +238,15 @@ class ThreatLockerClient:
                 method, path, status, (time.monotonic() - t0) * 1000, attempt,
             )
 
-            # Every call this server makes is a read (searches are POSTs with a
-            # filter body), so all of them may be retried.
-            retryable = status in (0, 429) or status >= 500
+            # Reads (including searches, which are POSTs with a filter body) are
+            # safe to retry on a transient failure. The 4 mutating calls this
+            # server makes (approve/reject/ignore an approval request, Ringfencing
+            # opt-in) pass idempotent=False: if ThreatLocker applied the write but
+            # the response was lost to a timeout or a transient 5xx, silently
+            # resending it would either double-act or come back as a confusing
+            # upstream error on an already-resolved request, so those calls must
+            # surface the failure instead of being retried underneath the caller.
+            retryable = idempotent and (status in (0, 429) or status >= 500)
             if retryable and attempt < _MAX_RETRIES:
                 delay = _retry_delay(resp, attempt)
                 if time.monotonic() - started + delay < _CALL_BUDGET_SECONDS:
