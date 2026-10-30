@@ -1,5 +1,7 @@
 # PRD-21247 · Code review
 
+Status: frozen @ adcb5d7
+
 ## Round 1 · 2026-10-30 · reviewed dev/PRD-21247 @ 2b428d2 (base main @ 8bdf9c5)
 
 Verdict: changes requested
@@ -120,3 +122,67 @@ Verdict: changes requested
 
 Status: changes requested → fixes applied above, ready for round 2 review. Scope of this round:
 only finding 1 (must-fix). Findings 2-3 (suggestions) intentionally left open.
+
+## Round 2 · 2026-10-30 · reviewed dev/PRD-21247 @ adcb5d7 (base main @ 8bdf9c5)
+
+Verdict: approved
+
+### Findings
+
+No must-fix. Round 1's two suggestions (stale `approvals.py:14` docstring, the one-Chinese-quote
+wording in the frozen main doc's Self-test section) remain open as suggestions; neither was
+required to be fixed this round and neither is addressed by this diff — restated here, not
+re-litigated.
+
+### Verification of round-1 Fix (finding 1)
+
+Re-read `git diff 2b428d2..adcb5d7 -- src/ tests/` end to end (the only diff since the sha already
+reviewed in round 1):
+
+- `ThreatLockerClient.post`/`.request` (`api_client.py:199-251`) now take `idempotent: bool = True`
+  and the predicate is `retryable = idempotent and (status in (0, 429) or status >= 500)` — reads
+  (including POST-shaped searches, which don't pass the flag) keep the pre-existing retry behavior
+  unchanged; nothing else in `request()` was touched.
+- All 4 mutating call sites pass `idempotent=False`: `approvals.py` `approve` (new
+  `client.post(..., idempotent=False)` call added at the only POST in that function — there was no
+  prior bare call to compare against, since this tool is new in this ticket), `reject`, `ignore`
+  (`tools/approvals.py:141,158`), and `ringfence.py`'s `opt_in` (`:57`). Grepped
+  `src/threatlocker_mcp/tools/` for every `client.post(` call: exactly these 4 plus the pre-existing
+  idempotent reads (e.g. `ringfence.py`'s `Eligibility` POST), and the reads correctly do **not**
+  pass `idempotent=False` — confirms the fix is scoped to the 4 write paths finding 1 named, no
+  more and no less.
+- The comment above the predicate was rewritten to state the idempotent/non-idempotent split and
+  why (quoted in the round-1 Fixes entry above) — no longer makes the now-false "every call is a
+  read" claim finding 1 flagged.
+- New tests assert the actual failure-mode finding 1 described (a transient failure on the mutating
+  call itself must not be silently resent): `test_non_idempotent_post_is_not_retried_on_5xx` and
+  `..._on_timeout` in `tests/test_api_client.py` call `.post(..., idempotent=False)` directly and
+  assert exactly 1 request was sent; `test_idempotent_post_default_still_retries_on_5xx` is the
+  needed negative control proving the default path is unchanged. At the tool layer,
+  `test_transient_failure_on_the_mutating_call_is_not_retried` (parametrized over
+  approve/reject/ignore in `tests/test_approvals_write.py`) and
+  `test_opt_in_transient_failure_is_not_retried` (`tests/test_ringfence.py`) each make the mutating
+  endpoint return a single 503 and assert the tool surfaces `error.code == "upstream_error"` with
+  exactly one call to that endpoint — this is the exact scenario finding 1 described (approve
+  succeeds upstream, response lost, no silent re-send) made concrete.
+
+### Independently re-run, not just re-read
+
+- `uv sync && uv run pytest -q` on `dev/PRD-21247 @ adcb5d7`: **276 passed, 0 failed** — matches the
+  round-1 `Fixes` entry's count (269 baseline + 7 new) and the `[DEV]` stub.
+- `grep -rnP '[\x{4e00}-\x{9fff}]' --exclude-dir=.git --exclude-dir=.venv src/ tests/ README.md`:
+  no matches.
+- `README.md`'s `## MSPbots Connector` section (header-delimited, not line-numbers) diffed byte-for-
+  byte against `origin/main`'s: identical.
+
+### Scope
+
+`git diff 2b428d2..adcb5d7 --stat`: `api_client.py`, `tools/approvals.py`, `tools/ringfence.py`,
+3 test files, and this review doc. No file outside the round-1 Fix's stated scope was touched; no
+new third-party dependency; no parameter stacking in the new test helpers.
+
+### Conclusion
+
+No must-fix. Code review passed on round 2 (round 1's 2 suggestions carried over, unresolved, both
+still non-blocking). Proceeding to merge into `main`, INT publish, and the connector wiki check in
+the review leg.
