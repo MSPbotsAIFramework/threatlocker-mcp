@@ -86,6 +86,37 @@ Verdict: changes requested
 - No new third-party dependency, no parameter stacking (all 6 new tools take only GUIDs/short
   strings, matching every existing tool's shape), no dead code introduced or left behind.
 
-Status: changes requested — see `legs/review.md` R4a. Resuming dev should only need to touch
-`api_client.py`'s retry predicate (and the two stale comments) for finding 1; findings 2-3 are
-drive-by since the files are already open.
+### Fixes (round 1)
+
+1. [must-fix, fixed] `src/threatlocker_mcp/api_client.py` — threaded `idempotent: bool = True`
+   through `ThreatLockerClient.request()`/`.post()`. The retry predicate is now
+   `retryable = idempotent and (status in (0, 429) or status >= 500)`, so the default (reads,
+   including POST-shaped searches) is unchanged, while a non-idempotent call surfaces the first
+   failure instead of being silently resent. The 4 mutating call sites now pass
+   `idempotent=False`: `src/threatlocker_mcp/tools/approvals.py` (`approve`, `reject`, `ignore`)
+   and `src/threatlocker_mcp/tools/ringfence.py` (`opt_in`). Replaced the stale "every call is a
+   read" comment with one that states the idempotent/non-idempotent split and why. Added
+   regression coverage: `tests/test_api_client.py` (`test_non_idempotent_post_is_not_retried_on_5xx`,
+   `test_non_idempotent_post_is_not_retried_on_timeout`,
+   `test_idempotent_post_default_still_retries_on_5xx` — the last one pins down that the default
+   path is unchanged), `tests/test_approvals_write.py`
+   (`test_transient_failure_on_the_mutating_call_is_not_retried`, parametrized over
+   approve/reject/ignore), `tests/test_ringfence.py` (`test_opt_in_transient_failure_is_not_retried`).
+   Commit: `a87a958` (synced with `main @ 8bdf9c5`, unchanged since round 1 — no merge needed).
+   Re-ran gates on `dev/PRD-21247 @ a87a958`: `uv run pytest` 276/276 (269 baseline + 7 new, 0
+   failed, 0 regressions); local smoke (`uv run python -m threatlocker_mcp`) — `/health` 200,
+   `tools/list` with a placeholder key returns all 23 tools (the 4 mutating ones now show
+   `idempotentHint: false` in their response, matching the tool annotations already in place),
+   missing-header request 401; Chinese-character scan of `src/`, `tests/`, `README.md` clean
+   (0 matches); `README.md`'s MSPbots Connector section (lines 17-87) still byte-identical to
+   `reference/readme-connector-section.md`; `gitleaks` not installed in this environment, skipped
+   (same as round 1).
+2. [suggestion, not changed] `src/threatlocker_mcp/tools/approvals.py:14` module docstring — left
+   as-is. Out of scope for this round: only the must-fix (finding 1) is addressed; a drive-by
+   wording fix is not a must-fix and risks touching unrelated lines mid-rework.
+3. [suggestion, not changed] `docs/tickets/PRD-21247.md:464` Self-test wording — left as-is for
+   the same reason. The main ticket document is frozen and is not edited during a review-fix
+   round regardless; both suggestions remain open for whoever next touches these files.
+
+Status: changes requested → fixes applied above, ready for round 2 review. Scope of this round:
+only finding 1 (must-fix). Findings 2-3 (suggestions) intentionally left open.
