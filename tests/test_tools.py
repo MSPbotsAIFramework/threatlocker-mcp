@@ -35,13 +35,23 @@ EXPECTED_TOOLS: dict[str, set[str]] = {
     "threatlocker_approvals_get": {"approvalRequestId"},
     "threatlocker_approvals_pending_count": set(),
     "threatlocker_approvals_get_permit_application": {"approvalRequestId"},
+    "threatlocker_approvals_approve": {"approvalRequestId"},
+    "threatlocker_approvals_reject": {"approvalRequestId", "reason"},
+    "threatlocker_approvals_ignore": {"approvalRequestId", "reason"},
     "threatlocker_audit_search": set(),
     "threatlocker_audit_get": set(),
     "threatlocker_audit_file_history": {"fullPath"},
     "threatlocker_organizations_list_children": set(),
     "threatlocker_organizations_get_auth_key": set(),
     "threatlocker_organizations_for_move_computers": set(),
+    "threatlocker_ringfence_get": {"ringfencePolicyId"},
+    "threatlocker_ringfence_eligibility": set(),
+    "threatlocker_ringfence_opt_in": set(),
 }
+
+# PRD-21247: the first mutating tools this connector exposes. Everything else
+# stays READ_ONLY -- test_every_tool_is_read_only below only asserts that.
+MUTATING_TOOLS = {"threatlocker_approvals_approve", "threatlocker_approvals_reject", "threatlocker_approvals_ignore", "threatlocker_ringfence_opt_in"}
 
 
 @pytest.fixture(scope="module")
@@ -66,11 +76,20 @@ def test_description_budget(tools, name):
     assert len(description.splitlines()[0]) <= 100
 
 
-@pytest.mark.parametrize("name", sorted(EXPECTED_TOOLS))
-def test_every_tool_is_read_only(tools, name):
+@pytest.mark.parametrize("name", sorted(EXPECTED_TOOLS.keys() - MUTATING_TOOLS))
+def test_every_other_tool_is_read_only(tools, name):
     annotations = tools[name].annotations
     assert annotations is not None
     assert annotations.readOnlyHint is True
+
+
+@pytest.mark.parametrize("name", sorted(MUTATING_TOOLS))
+def test_mutating_tools_are_marked_as_such(tools, name):
+    annotations = tools[name].annotations
+    assert annotations is not None
+    assert annotations.readOnlyHint is False
+    assert annotations.idempotentHint is False
+    assert annotations.destructiveHint is True
 
 
 def test_auth_key_tool_warns_it_is_a_secret(tools):
